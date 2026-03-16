@@ -22,7 +22,7 @@ onMounted(async () => {
   const token = route.query.token
   if (!token) {
     message.value = 'Authentication failed. Redirecting...'
-    setTimeout(() => router.push('/login'), 2000)
+    setTimeout(() => router.push('/auth/login'), 2000)
     return
   }
 
@@ -33,7 +33,7 @@ onMounted(async () => {
     router.push('/dashboard')
   } catch {
     authStore.logout()
-    router.push('/login')
+    router.push('/auth/login')
   }
 })
 </script>

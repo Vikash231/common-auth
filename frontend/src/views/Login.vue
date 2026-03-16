@@ -39,7 +39,7 @@
 
       <p class="auth-footer">
         Don't have an account?
-        <RouterLink to="/signup">Create one</RouterLink>
+        <RouterLink to="/auth/signup">Create one</RouterLink>
       </p>
     </div>
   </div>

@@ -34,7 +34,7 @@
 
       <p class="auth-footer">
         Already have an account?
-        <RouterLink to="/login">Sign in</RouterLink>
+        <RouterLink to="/auth/login">Sign in</RouterLink>
       </p>
     </div>
   </div>

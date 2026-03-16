@@ -15,7 +15,7 @@
         <span>✅</span>
         <div>
           <strong>Password set successfully!</strong>
-          <p>Your account is ready. <RouterLink to="/login">Sign in now</RouterLink></p>
+          <p>Your account is ready. <RouterLink to="/auth/login">Sign in now</RouterLink></p>
         </div>
       </div>
 

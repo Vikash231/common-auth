@@ -29,7 +29,7 @@ const router = useRouter()
 async function logout() {
   await api.post('/api/auth/logout').catch(() => {})
   authStore.logout()
-  router.push('/login')
+  router.push('/auth/login')
 }
 </script>
 
