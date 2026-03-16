@@ -1,0 +1,3 @@
+module common-auth
+
+go 1.25.4
