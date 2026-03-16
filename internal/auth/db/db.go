@@ -2,27 +2,56 @@ package db
 
 import (
 	"common-auth/internal/auth/models"
+	"fmt"
 	"log"
 	"os"
 	"time"
 
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
-	"gorm.io/driver/sqlite"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
 
 var DB *gorm.DB
 
-func Init() {
-	dsn := os.Getenv("DB_PATH")
-	if dsn == "" {
-		dsn = "./auth.db"
+// buildPostgresDSN returns a PostgreSQL connection string.
+// Use DATABASE_URL for a full URL, or set DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME (default: commonauth), DB_SSLMODE (default: disable).
+func buildPostgresDSN() string {
+	if u := os.Getenv("DATABASE_URL"); u != "" {
+		return u
 	}
+	host := os.Getenv("DB_HOST")
+	if host == "" {
+		host = "localhost"
+	}
+	port := os.Getenv("DB_PORT")
+	if port == "" {
+		port = "5432"
+	}
+	user := os.Getenv("DB_USER")
+	if user == "" {
+		user = "postgres"
+	}
+	password := os.Getenv("DB_PASSWORD")
+	name := os.Getenv("DB_NAME")
+	if name == "" {
+		name = "commonauth"
+	}
+	sslmode := os.Getenv("DB_SSLMODE")
+	if sslmode == "" {
+		sslmode = "disable"
+	}
+	return fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
+		host, port, user, password, name, sslmode)
+}
+
+func Init() {
+	dsn := buildPostgresDSN()
 
 	var err error
-	DB, err = gorm.Open(sqlite.Open(dsn), &gorm.Config{
+	DB, err = gorm.Open(postgres.Open(dsn), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Warn),
 	})
 	if err != nil {
