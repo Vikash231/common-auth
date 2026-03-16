@@ -1,0 +1,98 @@
+version: '3.9'
+
+services:
+  # ─── Auth Service ────────────────────────────────────────────────────────────
+  auth-service:
+    build:
+      context: .
+      dockerfile: docker/auth-service.Dockerfile
+    ports:
+      - "8083:8083"
+    environment:
+      PORT: "8083"
+      DB_PATH: /data/auth.db
+      PRIVATE_KEY_PATH: /keys/private.pem
+      PUBLIC_KEY_PATH: /keys/public.pem
+      APP_BASE_URL: ${APP_BASE_URL:-http://localhost:5173}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@example.com}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-Admin@12345}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-noreply@common-auth.local}
+      # OIDC (Google)
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+      OIDC_REDIRECT_URL: ${OIDC_REDIRECT_URL:-http://localhost:8080/api/auth/oidc/callback}
+      OIDC_ISSUER_URL: ${OIDC_ISSUER_URL:-https://accounts.google.com}
+      # SAML (Okta)
+      SAML_CERT_FILE: ${SAML_CERT_FILE:-}
+      SAML_KEY_FILE: ${SAML_KEY_FILE:-}
+      SAML_IDP_METADATA_URL: ${SAML_IDP_METADATA_URL:-}
+      SAML_SP_BASE_URL: ${SAML_SP_BASE_URL:-http://localhost:8080/api/auth}
+    volumes:
+      - auth-data:/data
+      - ./keys:/keys:ro
+    restart: unless-stopped
+
+  # ─── Weather Service ─────────────────────────────────────────────────────────
+  weather-service:
+    build:
+      context: .
+      dockerfile: docker/weather-service.Dockerfile
+    ports:
+      - "8081:8081"
+    environment:
+      PORT: "8081"
+      PUBLIC_KEY_PATH: /keys/public.pem
+    volumes:
+      - ./keys:/keys:ro
+    restart: unless-stopped
+
+  # ─── Distance Service ────────────────────────────────────────────────────────
+  distance-service:
+    build:
+      context: .
+      dockerfile: docker/distance-service.Dockerfile
+    ports:
+      - "8082:8082"
+    environment:
+      PORT: "8082"
+      PUBLIC_KEY_PATH: /keys/public.pem
+    volumes:
+      - ./keys:/keys:ro
+    restart: unless-stopped
+
+  # ─── API Gateway ─────────────────────────────────────────────────────────────
+  api-gateway:
+    build:
+      context: .
+      dockerfile: docker/api-gateway.Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      PORT: "8080"
+      APP_BASE_URL: ${APP_BASE_URL:-http://localhost:5173}
+      AUTH_SERVICE_URL: http://auth-service:8083
+      WEATHER_SERVICE_URL: http://weather-service:8081
+      DISTANCE_SERVICE_URL: http://distance-service:8082
+    depends_on:
+      - auth-service
+      - weather-service
+      - distance-service
+    restart: unless-stopped
+
+  # ─── Frontend ────────────────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "5173:80"
+    depends_on:
+      - api-gateway
+    restart: unless-stopped
+
+volumes:
+  auth-data:
