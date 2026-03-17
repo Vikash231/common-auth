@@ -17,7 +17,7 @@ func main() {
 	db.Init()
 	email.Init()
 	handlers.InitOIDC()
-	handlers.InitSAML(nil)
+	handlers.InitSAML()
 
 	r := gin.Default()
 

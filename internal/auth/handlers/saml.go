@@ -4,9 +4,11 @@ import (
 	"common-auth/internal/auth/db"
 	"common-auth/internal/auth/models"
 	"common-auth/internal/common"
+	"context"
 	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -20,29 +22,33 @@ import (
 var samlMiddleware *samlsp.Middleware
 
 // InitSAML initializes the SAML service provider middleware.
-func InitSAML(mux *http.ServeMux) {
+func InitSAML() {
 	certFile := os.Getenv("SAML_CERT_FILE")
 	keyFile := os.Getenv("SAML_KEY_FILE")
 	idpMetadataURL := os.Getenv("SAML_IDP_METADATA_URL")
 	spBaseURL := os.Getenv("SAML_SP_BASE_URL")
 
 	if certFile == "" || keyFile == "" || idpMetadataURL == "" || spBaseURL == "" {
-		return // SAML not configured
+		log.Printf("SAML skipped: set SAML_CERT_FILE, SAML_KEY_FILE, SAML_IDP_METADATA_URL, SAML_SP_BASE_URL to enable")
+		return
 	}
 
 	keyPair, err := tls.LoadX509KeyPair(certFile, keyFile)
 	if err != nil {
+		log.Printf("SAML init failed loading cert/key: %v", err)
 		return
 	}
 	keyPair.Leaf, _ = x509.ParseCertificate(keyPair.Certificate[0])
 
 	idpMetadataURLParsed, err := url.Parse(idpMetadataURL)
 	if err != nil {
+		log.Printf("SAML init failed parsing IdP metadata URL: %v", err)
 		return
 	}
 
-	idpMetadata, err := samlsp.FetchMetadata(nil, http.DefaultClient, *idpMetadataURLParsed)
+	idpMetadata, err := samlsp.FetchMetadata(context.Background(), http.DefaultClient, *idpMetadataURLParsed)
 	if err != nil {
+		log.Printf("SAML init failed fetching IdP metadata: %v", err)
 		return
 	}
 
@@ -54,8 +60,10 @@ func InitSAML(mux *http.ServeMux) {
 		IDPMetadata: idpMetadata,
 	})
 	if err != nil {
+		log.Printf("SAML init failed creating SP: %v", err)
 		return
 	}
+	log.Printf("SAML configured for SP base %s", spBaseURL)
 }
 
 // GET /auth/saml/login
