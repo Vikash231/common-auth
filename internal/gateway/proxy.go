@@ -15,27 +15,27 @@ import (
 )
 
 type Config struct {
-	AuthServiceURL    string
-	WeatherServiceURL string
+	AuthServiceURL     string
+	WeatherServiceURL  string
 	DistanceServiceURL string
 }
 
 func LoadConfig() Config {
 	return Config{
-		AuthServiceURL:    getEnv("AUTH_SERVICE_URL", "http://localhost:8083"),
-		WeatherServiceURL: getEnv("WEATHER_SERVICE_URL", "http://localhost:8081"),
+		AuthServiceURL:     getEnv("AUTH_SERVICE_URL", "http://localhost:8083"),
+		WeatherServiceURL:  getEnv("WEATHER_SERVICE_URL", "http://localhost:8081"),
 		DistanceServiceURL: getEnv("DISTANCE_SERVICE_URL", "http://localhost:8082"),
 	}
 }
 
 type validateResponse struct {
-	Valid    bool   `json:"valid"`
-	Allowed  bool   `json:"allowed"`
-	UserID   string `json:"user_id"`
-	Email    string `json:"email"`
-	Name     string `json:"name"`
-	IsAdmin  bool   `json:"is_admin"`
-	Error    string `json:"error"`
+	Valid   bool   `json:"valid"`
+	Allowed bool   `json:"allowed"`
+	UserID  string `json:"user_id"`
+	Email   string `json:"email"`
+	Name    string `json:"name"`
+	IsAdmin bool   `json:"is_admin"`
+	Error   string `json:"error"`
 }
 
 // Proxy creates the gateway handler that routes requests to the appropriate service.
@@ -137,11 +137,24 @@ func proxyTo(c *gin.Context, targetBase, targetPath string) {
 		_, _ = io.WriteString(w, `{"error":"upstream service unavailable"}`)
 	}
 
+	// Preserve original external request details for upstream validation (important for SAML ACS).
+	origPath := c.Request.URL.Path
+	origHost := c.Request.Host
+	origProto := "http"
+	if c.Request.TLS != nil {
+		origProto = "https"
+	}
+	if xfProto := c.GetHeader("X-Forwarded-Proto"); xfProto != "" {
+		origProto = xfProto
+	}
+	c.Request.Header.Set("X-Forwarded-Host", origHost)
+	c.Request.Header.Set("X-Forwarded-Proto", origProto)
+	c.Request.Header.Set("X-Forwarded-Uri", origPath)
+
 	// Rewrite the path
 	c.Request.URL.Path = targetPath
 	c.Request.URL.Host = target.Host
 	c.Request.URL.Scheme = target.Scheme
-	c.Request.Host = target.Host
 
 	proxy.ServeHTTP(c.Writer, c.Request)
 }

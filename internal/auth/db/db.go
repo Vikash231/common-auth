@@ -24,7 +24,7 @@ func buildPostgresDSN() string {
 	}
 	host := os.Getenv("DB_HOST")
 	if host == "" {
-		host = "localhost"
+		host = "host.docker.internal"
 	}
 	port := os.Getenv("DB_PORT")
 	if port == "" {
@@ -35,6 +35,9 @@ func buildPostgresDSN() string {
 		user = "postgres"
 	}
 	password := os.Getenv("DB_PASSWORD")
+	if password == "" {
+		password = "postgres"
+	}
 	name := os.Getenv("DB_NAME")
 	if name == "" {
 		name = "commonauth"

@@ -6,13 +6,44 @@ import (
 	"common-auth/internal/auth/handlers"
 	"common-auth/internal/auth/middleware"
 	"log"
+	"net/url"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	"github.com/joho/godotenv"
 )
 
+// loadDotEnv tries .env in cwd, then parent dirs (e.g. when debugging from cmd/auth-service).
+func loadDotEnv() string {
+	candidates := []string{
+		".env",
+		filepath.Join("..", ".env"),
+		filepath.Join("..", "..", ".env"),
+	}
+	for _, p := range candidates {
+		if _, err := os.Stat(p); err != nil {
+			continue
+		}
+		if err := godotenv.Load(p); err != nil {
+			log.Printf("godotenv: error loading %s: %v", p, err)
+			continue
+		}
+		return p
+	}
+	return ""
+}
+
 func main() {
+	cwd, _ := os.Getwd()
+	loadedFrom := loadDotEnv()
+
+	if loadedFrom == "" {
+		log.Printf("godotenv: no .env found in ., .., or ../.. (cwd=%s)", cwd)
+	}
+
 	// Initialize subsystems
 	db.Init()
 	email.Init()
@@ -22,8 +53,42 @@ func main() {
 	r := gin.Default()
 
 	// CORS
+	frontendURL := getEnv("APP_BASE_URL", "http://localhost:5173")
+	frontendHost := ""
+	if u, err := url.Parse(frontendURL); err == nil {
+		frontendHost = u.Hostname()
+	}
+	idpHost := ""
+	if idpURL := os.Getenv("SAML_IDP_METADATA_URL"); idpURL != "" {
+		if u, err := url.Parse(idpURL); err == nil {
+			idpHost = u.Hostname()
+		}
+	}
 	r.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{getEnv("APP_BASE_URL", "http://localhost:5173")},
+		AllowOrigins: []string{frontendURL},
+		AllowOriginFunc: func(origin string) bool {
+			if origin == "null" {
+				return true
+			}
+			u, err := url.Parse(origin)
+			if err != nil {
+				return false
+			}
+			host := u.Hostname()
+			if frontendHost != "" && host == frontendHost {
+				return true
+			}
+			if host == "localhost" || host == "127.0.0.1" {
+				return true
+			}
+			if idpHost != "" && host == idpHost {
+				return true
+			}
+			if strings.HasSuffix(host, ".auth0.com") || strings.HasSuffix(host, ".okta.com") {
+				return true
+			}
+			return false
+		},
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
 		AllowCredentials: true,

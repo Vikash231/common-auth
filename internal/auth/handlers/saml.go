@@ -5,6 +5,8 @@ import (
 	"common-auth/internal/auth/models"
 	"common-auth/internal/common"
 	"context"
+	"encoding/base64"
+	"encoding/xml"
 	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
@@ -12,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/crewjam/saml/samlsp"
@@ -20,6 +23,31 @@ import (
 )
 
 var samlMiddleware *samlsp.Middleware
+
+type samlStatusOnly struct {
+	XMLName xml.Name `xml:"Response"`
+	Status  struct {
+		StatusCode struct {
+			Value string `xml:"Value,attr"`
+		} `xml:"StatusCode"`
+		StatusMessage string `xml:"StatusMessage"`
+		StatusDetail  string `xml:"StatusDetail"`
+	} `xml:"Status"`
+}
+
+// samlMetadataTransport sets headers so metadata GET matches what curl/browsers send; avoids some 403/400 from default Go UA.
+type samlMetadataTransport struct{ base http.RoundTripper }
+
+func (t samlMetadataTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	r := req.Clone(req.Context())
+	if r.Header.Get("User-Agent") == "" {
+		r.Header.Set("User-Agent", "curl/8.0")
+	}
+	if r.Header.Get("Accept") == "" {
+		r.Header.Set("Accept", "application/samlmetadata+xml, application/xml, text/xml, */*")
+	}
+	return t.base.RoundTrip(r)
+}
 
 // InitSAML initializes the SAML service provider middleware.
 func InitSAML() {
@@ -46,13 +74,27 @@ func InitSAML() {
 		return
 	}
 
-	idpMetadata, err := samlsp.FetchMetadata(context.Background(), http.DefaultClient, *idpMetadataURLParsed)
+	// Use a client with browser-like headers. Some IdPs/WAFs reject Go's default User-Agent (Go-http-client/1.1).
+	metaClient := &http.Client{Transport: samlMetadataTransport{base: http.DefaultTransport}}
+	log.Printf("SAML fetching IdP metadata from %s", idpMetadataURLParsed.String())
+
+	idpMetadata, err := samlsp.FetchMetadata(context.Background(), metaClient, *idpMetadataURLParsed)
 	if err != nil {
 		log.Printf("SAML init failed fetching IdP metadata: %v", err)
 		return
 	}
 
-	rootURL, _ := url.Parse(spBaseURL)
+	rootURL, err := url.Parse(spBaseURL)
+	if err != nil {
+		log.Printf("SAML init failed parsing SAML_SP_BASE_URL: %v", err)
+		return
+	}
+	// crewjam/saml joins ACS as relative "saml/acs". Per net/url.ResolveReference, a base
+	// without trailing slash makes .../api/auth + saml/acs become .../api/saml/acs (drops "auth").
+	// Trailing slash yields .../api/auth/saml/acs.
+	if rootURL.Path != "" && rootURL.Path != "/" && !strings.HasSuffix(rootURL.Path, "/") {
+		rootURL.Path += "/"
+	}
 	samlMiddleware, err = samlsp.New(samlsp.Options{
 		URL:         *rootURL,
 		Key:         keyPair.PrivateKey.(*rsa.PrivateKey),
@@ -87,8 +129,56 @@ func SAMLCallback(c *gin.Context) {
 		return
 	}
 
-	assertion, err := samlMiddleware.ServiceProvider.ParseResponse(c.Request, nil)
+	// Behind api-gateway, preserve original external ACS URL context for SAML validation.
+	// ParseResponse validates destination/recipient against request URL.
+	if xfHost := c.GetHeader("X-Forwarded-Host"); xfHost != "" {
+		c.Request.Host = xfHost
+		c.Request.URL.Host = xfHost
+	}
+	if xfProto := c.GetHeader("X-Forwarded-Proto"); xfProto != "" {
+		c.Request.URL.Scheme = xfProto
+	}
+	if xfURI := c.GetHeader("X-Forwarded-Uri"); xfURI != "" {
+		c.Request.URL.Path = xfURI
+	}
+	// Fallback for direct/internal callbacks where URL scheme/host are not preserved.
+	// Validation must compare against the public ACS derived from SAML_SP_BASE_URL.
+	if c.Request.URL.Scheme == "" || c.Request.URL.Host == "" {
+		if spBase := os.Getenv("SAML_SP_BASE_URL"); spBase != "" {
+			if sp, err := url.Parse(spBase); err == nil {
+				if c.Request.URL.Scheme == "" {
+					c.Request.URL.Scheme = sp.Scheme
+				}
+				if c.Request.URL.Host == "" {
+					c.Request.URL.Host = sp.Host
+					c.Request.Host = sp.Host
+				}
+				acsPath := strings.TrimSuffix(sp.Path, "/") + "/saml/acs"
+				c.Request.URL.Path = acsPath
+			}
+		}
+	}
+
+	possibleRequestIDs := []string{}
+	if samlMiddleware.ServiceProvider.AllowIDPInitiated {
+		possibleRequestIDs = append(possibleRequestIDs, "")
+	}
+	trackedRequests := samlMiddleware.RequestTracker.GetTrackedRequests(c.Request)
+	for _, tr := range trackedRequests {
+		possibleRequestIDs = append(possibleRequestIDs, tr.SAMLRequestID)
+	}
+
+	assertion, err := samlMiddleware.ServiceProvider.ParseResponse(c.Request, possibleRequestIDs)
 	if err != nil {
+		if raw := c.PostForm("SAMLResponse"); raw != "" {
+			if decoded, decErr := base64.StdEncoding.DecodeString(raw); decErr == nil {
+				var st samlStatusOnly
+				if xmlErr := xml.Unmarshal(decoded, &st); xmlErr == nil {
+					log.Printf("SAML response status: code=%q message=%q detail=%q", st.Status.StatusCode.Value, st.Status.StatusMessage, st.Status.StatusDetail)
+				}
+			}
+		}
+		log.Printf("SAML assertion validation failed: %v (req=%s://%s%s, tracked_ids=%d)", err, c.Request.URL.Scheme, c.Request.Host, c.Request.URL.Path, len(possibleRequestIDs))
 		common.Unauthorized(c, "SAML assertion validation failed")
 		return
 	}
